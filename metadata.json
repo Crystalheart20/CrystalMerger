@@ -1,0 +1,6 @@
+{
+  "name": "Document Collate and Merge Tool",
+  "description": "Collaborate, reorder, preview and merge diverse document types including PDFs, Word documents, Excel spreadsheets, text files, and images into a single professional PDF dossier, complete with optional AI cover page design, automated Table of Contents, and custom page numbering.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
