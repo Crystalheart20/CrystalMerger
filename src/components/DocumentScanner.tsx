@@ -10,7 +10,9 @@ import {
   AlertCircle, 
   SlidersHorizontal,
   Info,
-  CheckCircle2
+  CheckCircle2,
+  Upload,
+  Image as ImageIcon
 } from "lucide-react";
 
 interface DocumentScannerProps {
@@ -32,11 +34,15 @@ export function DocumentScanner({ isOpen, onClose, onSaveScan }: DocumentScanner
   // Image adjustments
   const [filter, setFilter] = useState<ScanFilter>("threshold");
   const [rotation, setRotation] = useState<number>(0); // 0, 90, 180, 270
+  const [thresholdValue, setThresholdValue] = useState<number>(128);
+  const [magicContrast, setMagicContrast] = useState<number>(35);
   const [fileName, setFileName] = useState("Scanned_Document");
+  const [isDragging, setIsDragging] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const sourceCanvasRef = useRef<HTMLCanvasElement>(null);
   const targetCanvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Automatically start camera when scanner opens
   useEffect(() => {
@@ -51,18 +57,20 @@ export function DocumentScanner({ isOpen, onClose, onSaveScan }: DocumentScanner
     };
   }, [isOpen]);
 
-  // Re-apply filter and rotation when filter, rotation, or step changes
+  // Re-apply filter and rotation when filter, rotation, threshold, or magic contrast changes
   useEffect(() => {
     if (scanStep === "preview" && sourceCanvasRef.current && targetCanvasRef.current) {
       applyFiltersAndRotation();
     }
-  }, [scanStep, filter, rotation]);
+  }, [scanStep, filter, rotation, thresholdValue, magicContrast]);
 
   const resetState = () => {
     setScanStep("camera");
     setCapturedUrl(null);
     setFilter("threshold");
     setRotation(0);
+    setThresholdValue(128);
+    setMagicContrast(35);
     setFileName(`Scanned_${new Date().toLocaleDateString("en-US").replace(/\//g, "-")}_${Math.floor(100 + Math.random() * 900)}`);
   };
 
@@ -129,6 +137,57 @@ export function DocumentScanner({ isOpen, onClose, onSaveScan }: DocumentScanner
     stopCamera();
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    loadImageFile(file);
+  };
+
+  const loadImageFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const sourceCanvas = sourceCanvasRef.current;
+        if (!sourceCanvas) return;
+        const ctx = sourceCanvas.getContext("2d");
+        if (!ctx) return;
+
+        sourceCanvas.width = img.width;
+        sourceCanvas.height = img.height;
+        ctx.clearRect(0, 0, img.width, img.height);
+        ctx.drawImage(img, 0, 0);
+
+        // Pre-fill filename based on original file name (excluding extension)
+        const nameWithoutExt = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+        setFileName(`${nameWithoutExt}_Scan`);
+        setCapturedUrl(event.target?.result as string);
+        setScanStep("preview");
+        stopCamera();
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith("image/")) {
+      loadImageFile(file);
+    }
+  };
+
   const applyFiltersAndRotation = () => {
     const sourceCanvas = sourceCanvasRef.current;
     const targetCanvas = targetCanvasRef.current;
@@ -171,13 +230,13 @@ export function DocumentScanner({ isOpen, onClose, onSaveScan }: DocumentScanner
         } else if (filter === "threshold") {
           const gray = 0.299 * r + 0.587 * g + 0.114 * b;
           // Clean thresholding: Turn shadows into pure black and bright pages into pure white print output
-          const value = gray > 125 ? 255 : 0;
+          const value = gray > thresholdValue ? 255 : 0;
           data[i] = value;
           data[i + 1] = value;
           data[i + 2] = value;
         } else if (filter === "magic") {
           // Boost contrast to make printed color diagrams look vibrant & remove muddy shadows
-          const contrast = 35;
+          const contrast = magicContrast;
           const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
           
           const nr = Math.min(255, Math.max(0, factor * (r - 128) + 128));
@@ -249,9 +308,16 @@ export function DocumentScanner({ isOpen, onClose, onSaveScan }: DocumentScanner
           
           {/* CAMERA RUNNING SCREEN */}
           {scanStep === "camera" && (
-            <div className="flex-1 bg-slate-900 relative flex flex-col items-center justify-center p-4 overflow-hidden">
+            <div 
+              className={`flex-1 bg-slate-900 relative flex flex-col items-center justify-center p-6 overflow-hidden border-2 border-dashed transition-all ${
+                isDragging ? "border-blue-500 bg-slate-950/90" : "border-transparent"
+              }`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
               {cameraState === "active" ? (
-                <div className="relative max-h-full max-w-full aspect-[4/3] rounded-lg overflow-hidden border border-slate-800 shadow-2xl">
+                <div className="relative max-h-[70%] max-w-full aspect-[4/3] rounded-lg overflow-hidden border border-slate-800 shadow-2xl">
                   <video 
                     ref={videoRef} 
                     autoPlay 
@@ -278,30 +344,42 @@ export function DocumentScanner({ isOpen, onClose, onSaveScan }: DocumentScanner
                   </div>
                 </div>
               ) : cameraState === "inactive" ? (
-                <div className="text-center text-slate-450 space-y-3">
+                <div className="text-center text-slate-400 space-y-3">
                   <RefreshCw className="w-10 h-10 animate-spin text-blue-500 mx-auto" />
-                  <p className="text-sm">Configuring camera stream parameters...</p>
+                  <p className="text-sm font-medium">Configuring camera stream parameters...</p>
                 </div>
               ) : (
-                <div className="max-w-md text-center p-6 bg-slate-950/60 border border-red-500/20 rounded-xl space-y-4">
-                  <AlertCircle className="w-12 h-12 text-red-500 mx-auto" />
+                <div className="max-w-md text-center p-8 bg-slate-950/60 border border-slate-800 rounded-2xl space-y-5">
+                  <AlertCircle className="w-12 h-12 text-blue-500 mx-auto" />
                   <div>
-                    <h4 className="font-semibold text-slate-200 text-sm">Webcam Access Required</h4>
-                    <p className="text-xs text-slate-400 mt-1">{errorMsg}</p>
+                    <h4 className="font-semibold text-slate-200 text-sm">Camera Not Found or Disabled</h4>
+                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                      Camera access might be blocked by your browser, iframe security, or no device is attached. No worries! You can still import any document photo directly.
+                    </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={startCamera}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all"
-                  >
-                    Try Re-connecting Camera
-                  </button>
+                  <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                    <button
+                      type="button"
+                      onClick={startCamera}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg transition-all"
+                    >
+                      Try Re-connecting
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Select Image File</span>
+                    </button>
+                  </div>
                 </div>
               )}
 
-              {/* Floating Camera Actions bar */}
-              {cameraState === "active" && (
-                <div className="absolute bottom-6 inset-x-0 flex justify-center">
+              {/* Floating Camera Actions / Manual Upload option bar */}
+              <div className="absolute bottom-6 inset-x-0 flex flex-col items-center gap-3">
+                {cameraState === "active" && (
                   <button
                     type="button"
                     onClick={capturePhoto}
@@ -310,6 +388,31 @@ export function DocumentScanner({ isOpen, onClose, onSaveScan }: DocumentScanner
                   >
                     <div className="w-8 h-8 bg-blue-500 rounded-full animate-pulse"></div>
                   </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-4 py-2 bg-slate-900/80 hover:bg-slate-900 text-slate-350 hover:text-white text-xs font-medium border border-slate-850 hover:border-slate-750 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Upload or Drag a Document photo instead</span>
+                </button>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+              </div>
+
+              {isDragging && (
+                <div className="absolute inset-0 bg-blue-950/80 backdrop-blur-xs flex flex-col items-center justify-center text-white pointer-events-none gap-3 z-10">
+                  <div className="p-4 bg-blue-600 rounded-full animate-bounce">
+                    <Upload className="w-8 h-8 text-white" />
+                  </div>
+                  <p className="text-sm font-bold">Drop your document photo to scan instantly!</p>
                 </div>
               )}
             </div>
@@ -356,7 +459,7 @@ export function DocumentScanner({ isOpen, onClose, onSaveScan }: DocumentScanner
                       >
                         <div className="flex items-center gap-2">
                           <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
-                            filter === preset.key ? "border-blue-500" : "border-slate-350"
+                            filter === preset.key ? "border-blue-500" : "border-slate-300"
                           }`}>
                             {filter === preset.key && <div className="w-2 h-2 bg-blue-500 rounded-full"></div>}
                           </div>
@@ -367,6 +470,49 @@ export function DocumentScanner({ isOpen, onClose, onSaveScan }: DocumentScanner
                     ))}
                   </div>
                 </div>
+
+                {/* Adjustments Panel (Sliders) */}
+                {filter === "threshold" && (
+                  <div className="space-y-1.5 p-3.5 bg-blue-50/50 rounded-xl border border-blue-100">
+                    <div className="flex justify-between text-[10px] font-bold text-blue-800">
+                      <span>Threshold Level</span>
+                      <span>{thresholdValue}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="50"
+                      max="200"
+                      value={thresholdValue}
+                      onChange={(e) => setThresholdValue(Number(e.target.value))}
+                      className="w-full h-1.5 bg-blue-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    />
+                    <div className="flex justify-between text-[9px] text-slate-400">
+                      <span>Darker (More details)</span>
+                      <span>Lighter (Clean page)</span>
+                    </div>
+                  </div>
+                )}
+
+                {filter === "magic" && (
+                  <div className="space-y-1.5 p-3.5 bg-blue-50/50 rounded-xl border border-blue-100">
+                    <div className="flex justify-between text-[10px] font-bold text-blue-800">
+                      <span>Contrast Boost</span>
+                      <span>{magicContrast}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="10"
+                      max="80"
+                      value={magicContrast}
+                      onChange={(e) => setMagicContrast(Number(e.target.value))}
+                      className="w-full h-1.5 bg-blue-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    />
+                    <div className="flex justify-between text-[9px] text-slate-400">
+                      <span>Softer Colors</span>
+                      <span>Vibrant & Sharp</span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Extra rotation options */}
                 <div className="space-y-2 pt-2 border-t border-slate-200/50">
@@ -414,9 +560,9 @@ export function DocumentScanner({ isOpen, onClose, onSaveScan }: DocumentScanner
                     setScanStep("camera");
                     startCamera();
                   }}
-                  className="absolute bottom-4 left-6 px-3.5 py-1.5 bg-slate-950/50 hover:bg-slate-950/85 text-slate-300 border border-slate-850 rounded-lg text-xs font-medium transition-all"
+                  className="absolute bottom-4 left-6 px-3.5 py-1.5 bg-slate-950/50 hover:bg-slate-950/85 text-slate-300 border border-slate-800 rounded-lg text-xs font-medium transition-all"
                 >
-                  ← Retake Snapshot
+                  ← Retake / Upload Different Image
                 </button>
               </div>
             </>
@@ -461,3 +607,4 @@ export function DocumentScanner({ isOpen, onClose, onSaveScan }: DocumentScanner
     </div>
   );
 }
+
